@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Monster Game</title>
+<style>
+body{
+  margin:0;
+  background:#9bbc0f;
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  height:100vh;
+  overflow:hidden;
+}
+canvas{
+  border:4px solid #0f380f;
+  image-rendering:pixelated;
+}
+</style>
+</head>
+<body>
+
+<canvas id="game" width="320" height="288"></canvas>
+
+<script>
+const canvas=document.getElementById("game");
+const ctx=canvas.getContext("2d");
+ctx.font="12px monospace";
+ctx.textBaseline="top";
+
+function resize(){
+ const scale=Math.floor(
+   Math.min(
+     window.innerWidth/canvas.width,
+     window.innerHeight/canvas.height
+   )
+ );
+ canvas.style.width=canvas.width*scale+"px";
+ canvas.style.height=canvas.height*scale+"px";
+}
+window.addEventListener("resize",resize);
+resize();
+
+// ================= WORLD =================
+const tileSize=32;
+const view=5;
+let world=new Map();
+
+const tiles={
+ grass:{color:"#3cb043",solid:false,wild:true},
+ wall:{color:"#306230",solid:true,wild:false}
+};
+
+function key(x,y){return x+","+y;}
+function getTile(x,y){return world.get(key(x,y));}
+function setTile(x,y,v){world.set(key(x,y),v);}
+
+function generate(){
+ for(let y=-view;y<=view;y++){
+  for(let x=-view;x<=view;x++){
+   let gx=playerX+x;
+   let gy=playerY+y;
+   if(!getTile(gx,gy)){
+    let t=Math.random()<0.15?"wall":"grass";
+    setTile(gx,gy,t);
+   }
+  }
+ }
+}
+
+// ================= DATA =================
+const TYPES=["fire","water","grass"];
+
+function elemental(a,d){
+ if(a==="fire"&&d==="grass") return 2;
+ if(a==="grass"&&d==="water") return 2;
+ if(a==="water"&&d==="fire") return 2;
+
+ if(a==="grass"&&d==="fire") return 0.5;
+ if(a==="water"&&d==="grass") return 0.5;
+ if(a==="fire"&&d==="water") return 0.5;
+ return 1;
+}
+
+const MOVES={
+ tackle:{name:"Tackle",power:10,pp:20,type:"normal"},
+ ember:{name:"Ember",power:15,pp:15,type:"fire",burn:0.2},
+ waterGun:{name:"WaterGun",power:15,pp:15,type:"water"},
+ vine:{name:"Vine",power:15,pp:15,type:"grass"}
+};
+
+function createMonster(type,level){
+ return{
+  name:type.toUpperCase(),
+  type,
+  level,
+  maxHp:level*8,
+  hp:level*8,
+  atk:level+4,
+  def:level+3,
+  status:null,
+  moves:[
+   JSON.parse(JSON.stringify(MOVES.tackle)),
+   JSON.parse(JSON.stringify(
+    type==="fire"?MOVES.ember:
+    type==="water"?MOVES.waterGun:
+    MOVES.vine
+   ))
+  ]
+ };
+}
+
+// ================= PLAYER =================
+let playerX=0;
+let playerY=0;
+
+let player={
+ team:[],
+ storage:[],
+ active:0
+};
+
+player.team.push(createMonster("fire",5));
+
+// ================= GAME STATE =================
+let state="explore"; // explore, battle, team
+let enemy=null;
+let turn="player";
+let msg="";
+
+// ================= BATTLE =================
+function startBattle(){
+ enemy=createMonster(
+  TYPES[Math.floor(Math.random()*3)],
+  4+Math.floor(Math.random()*3)
+ );
+ state="battle";
+ turn="player";
+ msg="Wild "+enemy.type+" appeared!";
+}
+
+function damage(a,d,move){
+ let base=move.power+a.atk-d.def;
+ let stab=a.type===move.type?1.2:1;
+ let element=elemental(move.type,d.type);
+ let crit=Math.random()<0.1?1.5:1;
+ return Math.max(1,Math.floor(base*stab*element*crit));
+}
+
+function playerAttack(i){
+ if(turn!=="player") return;
+
+ let active=player.team[player.active];
+ let move=active.moves[i];
+ if(move.pp<=0){ msg="No PP!"; return; }
+
+ move.pp--;
+
+ let dmg=damage(active,enemy,move);
+ enemy.hp-=dmg;
+
+ msg=move.name+" did "+dmg;
+
+ if(move.burn && Math.random()<move.burn){
+  enemy.status="burn";
+  msg+=" Burn!";
+ }
+
+ if(enemy.hp<=0){ win(); return; }
+
+ turn="enemy";
+ setTimeout(enemyTurn,700);
+}
+
+function enemyTurn(){
+ let active=player.team[player.active];
+ let move=enemy.moves[0];
+ let dmg=damage(enemy,active,move);
+ active.hp-=dmg;
+ msg="Enemy hit "+dmg;
+
+ if(active.hp<=0){
+  msg="Fainted!";
+  setTimeout(()=>state="explore",1000);
+  restoreTeam();
+  return;
+ }
+
+ turn="player";
+}
+
+function win(){
+ msg="Victory!";
+ setTimeout(()=>state="explore",1000);
+}
+
+function capture(){
+ if(turn!=="player") return;
+
+ let chance=(enemy.maxHp-enemy.hp)/enemy.maxHp;
+
+ if(Math.random()<chance){
+  let copy=JSON.parse(JSON.stringify(enemy));
+  if(player.team.length<3){
+   player.team.push(copy);
+   msg="Captured to team!";
+  }else{
+   player.storage.push(copy);
+   msg="Sent to storage!";
+  }
+  setTimeout(()=>state="explore",1000);
+ }else{
+  msg="Capture failed!";
+  turn="enemy";
+  setTimeout(enemyTurn,700);
+ }
+}
+function restoreTeam(){
+ player.team.forEach(mon=>{
+  mon.hp = mon.maxHp;
+  mon.status = null;
+
+  mon.moves.forEach(move=>{
+    move.pp = move.pp; // mantém PP atual
+  });
+ });
+}
+// ================= INPUT =================
+document.addEventListener("keydown",e=>{
+
+ if(state==="explore"){
+  let nx=playerX;
+  let ny=playerY;
+
+  if(e.key==="w"||e.key==="ArrowUp") ny--;
+  if(e.key==="s"||e.key==="ArrowDown") ny++;
+  if(e.key==="a"||e.key==="ArrowLeft") nx--;
+  if(e.key==="d"||e.key==="ArrowRight") nx++;
+
+  generate();
+  let t=getTile(nx,ny);
+
+  if(t && !tiles[t].solid){
+   playerX=nx;
+   playerY=ny;
+
+   if(tiles[t].wild && Math.random()<0.4){
+    startBattle();
+   }
+  }
+
+  if(e.key==="t") state="team";
+ }
+
+ else if(state==="battle"){
+  if(e.key==="1") playerAttack(0);
+  if(e.key==="2") playerAttack(1);
+  if(e.key==="c") capture();
+ }
+
+ else if(state==="team"){
+  if(e.key==="1") player.active=0;
+  if(e.key==="2" && player.team[1]) player.active=1;
+  if(e.key==="3" && player.team[2]) player.active=2;
+  if(e.key==="Escape") state="explore";
+ }
+
+});
+
+// ================= DRAW =================
+function drawExplore(){
+ generate();
+
+ for(let y=-view;y<=view;y++){
+  for(let x=-view;x<=view;x++){
+   let t=getTile(playerX+x,playerY+y);
+   ctx.fillStyle=tiles[t].color;
+   ctx.fillRect(
+    (x+view)*tileSize,
+    (y+view)*tileSize,
+    tileSize,tileSize
+   );
+  }
+ }
+
+ ctx.fillStyle="red";
+ ctx.fillRect(view*tileSize+8,view*tileSize+8,16,16);
+}
+
+function drawBattle(){
+ ctx.fillStyle="#000";
+ ctx.fillRect(0,0,320,288);
+
+ let active=player.team[player.active];
+
+ ctx.fillStyle="#fff";
+ ctx.fillText("Enemy "+enemy.type+" Lv"+enemy.level,20,20);
+ ctx.fillText("HP "+enemy.hp+"/"+enemy.maxHp,20,40);
+
+ ctx.fillText("Active "+active.name,20,100);
+ ctx.fillText("HP "+active.hp+"/"+active.maxHp,20,120);
+
+ ctx.fillText("1:"+active.moves[0].name+" PP:"+active.moves[0].pp,20,160);
+ ctx.fillText("2:"+active.moves[1].name+" PP:"+active.moves[1].pp,20,180);
+ ctx.fillText("C:Capture",20,200);
+
+ ctx.fillText(msg,20,230);
+}
+
+function drawTeam(){
+ ctx.fillStyle="#111";
+ ctx.fillRect(0,0,320,288);
+
+ ctx.fillStyle="#fff";
+ ctx.fillText("TEAM",20,20);
+
+ player.team.forEach((m,i)=>{
+  ctx.fillText(
+   (i+1)+": "+m.name+" HP:"+m.hp+"/"+m.maxHp,
+   20,60+i*20
+  );
+ });
+
+ ctx.fillText("ESC to exit",20,200);
+}
+
+function loop(){
+ ctx.clearRect(0,0,320,288);
+
+ if(state==="explore") drawExplore();
+ if(state==="battle") drawBattle();
+ if(state==="team") drawTeam();
+
+ requestAnimationFrame(loop);
+}
+
+generate();
+loop();
+</script>
+</body>
+</html>
