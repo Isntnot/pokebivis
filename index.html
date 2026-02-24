@@ -7,21 +7,78 @@
 body{
   margin:0;
   background:#9bbc0f;
-  display:flex;
-  justify-content:center;
-  align-items:center;
-  height:100vh;
   overflow:hidden;
+  font-family:monospace;
 }
-canvas{
+
+#game{
+  display:block;
+  margin:auto;
   border:4px solid #0f380f;
   image-rendering:pixelated;
 }
+
+#ui{
+  position:fixed;
+  inset:0;
+  pointer-events:none;
+}
+
+#joystick{
+  position:absolute;
+  bottom:30px;
+  left:30px;
+  width:120px;
+  height:120px;
+  border-radius:50%;
+  background:rgba(0,0,0,0.2);
+  pointer-events:auto;
+}
+
+#stick{
+  position:absolute;
+  width:50px;
+  height:50px;
+  border-radius:50%;
+  background:rgba(255,255,255,0.6);
+  top:35px;
+  left:35px;
+}
+
+.btn{
+  position:absolute;
+  background:#306230;
+  color:white;
+  padding:10px;
+  border-radius:8px;
+  pointer-events:auto;
+  user-select:none;
+}
+
+#menuBtn{ top:20px; right:20px; }
+#attack1{ bottom:120px; right:30px; }
+#attack2{ bottom:60px; right:30px; }
+#captureBtn{ bottom:20px; right:30px; }
+
+.hidden{ display:none; }
+
 </style>
 </head>
 <body>
 
 <canvas id="game" width="320" height="288"></canvas>
+
+<div id="ui">
+  <div id="joystick">
+    <div id="stick"></div>
+  </div>
+
+  <div id="menuBtn" class="btn">MENU</div>
+
+  <div id="attack1" class="btn hidden">ATK 1</div>
+  <div id="attack2" class="btn hidden">ATK 2</div>
+  <div id="captureBtn" class="btn hidden">CAPTURE</div>
+</div>
 
 <script>
 const canvas=document.getElementById("game");
@@ -31,10 +88,10 @@ ctx.textBaseline="top";
 
 function resize(){
  const scale=Math.floor(
-   Math.min(
-     window.innerWidth/canvas.width,
-     window.innerHeight/canvas.height
-   )
+  Math.min(
+   window.innerWidth/canvas.width,
+   window.innerHeight/canvas.height
+  )
  );
  canvas.style.width=canvas.width*scale+"px";
  canvas.style.height=canvas.height*scale+"px";
@@ -62,8 +119,7 @@ function generate(){
    let gx=playerX+x;
    let gy=playerY+y;
    if(!getTile(gx,gy)){
-    let t=Math.random()<0.15?"wall":"grass";
-    setTile(gx,gy,t);
+    setTile(gx,gy,Math.random()<0.15?"wall":"grass");
    }
   }
  }
@@ -76,7 +132,6 @@ function elemental(a,d){
  if(a==="fire"&&d==="grass") return 2;
  if(a==="grass"&&d==="water") return 2;
  if(a==="water"&&d==="fire") return 2;
-
  if(a==="grass"&&d==="fire") return 0.5;
  if(a==="water"&&d==="grass") return 0.5;
  if(a==="fire"&&d==="water") return 0.5;
@@ -92,7 +147,7 @@ const MOVES={
 
 function createMonster(type,level){
  return{
-  name:type.toUpperCase(),
+  name:type,
   type,
   level,
   maxHp:level*8,
@@ -116,15 +171,13 @@ let playerX=0;
 let playerY=0;
 
 let player={
- team:[],
+ team:[createMonster("fire",5)],
  storage:[],
  active:0
 };
 
-player.team.push(createMonster("fire",5));
-
-// ================= GAME STATE =================
-let state="explore"; // explore, battle, team
+// ================= STATE =================
+let state="explore";
 let enemy=null;
 let turn="player";
 let msg="";
@@ -133,44 +186,38 @@ let msg="";
 function startBattle(){
  enemy=createMonster(
   TYPES[Math.floor(Math.random()*3)],
-  4+Math.floor(Math.random()*3)
+  4+Math.floor(Math.random()*2)
  );
  state="battle";
  turn="player";
- msg="Wild "+enemy.type+" appeared!";
+ msg="Wild "+enemy.type+"!";
+ updateUI();
 }
 
-function damage(a,d,move){
- let base=move.power+a.atk-d.def;
- let stab=a.type===move.type?1.2:1;
- let element=elemental(move.type,d.type);
+function damage(a,d,m){
+ let base=m.power+a.atk-d.def;
+ let stab=a.type===m.type?1.2:1;
+ let element=elemental(m.type,d.type);
  let crit=Math.random()<0.1?1.5:1;
  return Math.max(1,Math.floor(base*stab*element*crit));
 }
 
 function playerAttack(i){
  if(turn!=="player") return;
-
  let active=player.team[player.active];
  let move=active.moves[i];
- if(move.pp<=0){ msg="No PP!"; return; }
-
+ if(move.pp<=0){ msg="No PP"; return; }
  move.pp--;
-
  let dmg=damage(active,enemy,move);
  enemy.hp-=dmg;
-
- msg=move.name+" did "+dmg;
-
- if(move.burn && Math.random()<move.burn){
-  enemy.status="burn";
-  msg+=" Burn!";
+ msg=move.name+" "+dmg;
+ if(enemy.hp<=0){
+  msg="Victory";
+  setTimeout(()=>{ state="explore"; updateUI(); },800);
+  return;
  }
-
- if(enemy.hp<=0){ win(); return; }
-
  turn="enemy";
- setTimeout(enemyTurn,700);
+ setTimeout(enemyTurn,600);
 }
 
 function enemyTurn(){
@@ -178,165 +225,120 @@ function enemyTurn(){
  let move=enemy.moves[0];
  let dmg=damage(enemy,active,move);
  active.hp-=dmg;
- msg="Enemy hit "+dmg;
-
+ msg="Enemy "+dmg;
  if(active.hp<=0){
-  msg="Fainted!";
-  setTimeout(()=>state="explore",1000);
-  restoreTeam();
+  active.hp=active.maxHp;
+  state="explore";
+  updateUI();
   return;
  }
-
  turn="player";
 }
 
-function win(){
- msg="Victory!";
- setTimeout(()=>state="explore",1000);
-}
-
 function capture(){
- if(turn!=="player") return;
-
  let chance=(enemy.maxHp-enemy.hp)/enemy.maxHp;
-
  if(Math.random()<chance){
-  let copy=JSON.parse(JSON.stringify(enemy));
-  if(player.team.length<3){
-   player.team.push(copy);
-   msg="Captured to team!";
-  }else{
-   player.storage.push(copy);
-   msg="Sent to storage!";
-  }
-  setTimeout(()=>state="explore",1000);
+  if(player.team.length<3)
+    player.team.push(enemy);
+  else
+    player.storage.push(enemy);
+  msg="Captured!";
+  setTimeout(()=>{ state="explore"; updateUI(); },800);
  }else{
-  msg="Capture failed!";
+  msg="Fail!";
   turn="enemy";
-  setTimeout(enemyTurn,700);
+  setTimeout(enemyTurn,600);
  }
 }
-function restoreTeam(){
- player.team.forEach(mon=>{
-  mon.hp = mon.maxHp;
-  mon.status = null;
 
-  mon.moves.forEach(move=>{
-    move.pp = move.pp; // mantém PP atual
-  });
- });
-}
-// ================= INPUT =================
-document.addEventListener("keydown",e=>{
+// ================= JOYSTICK =================
+const joy=document.getElementById("joystick");
+const stick=document.getElementById("stick");
+let joyActive=false;
 
- if(state==="explore"){
-  let nx=playerX;
-  let ny=playerY;
-
-  if(e.key==="w"||e.key==="ArrowUp") ny--;
-  if(e.key==="s"||e.key==="ArrowDown") ny++;
-  if(e.key==="a"||e.key==="ArrowLeft") nx--;
-  if(e.key==="d"||e.key==="ArrowRight") nx++;
-
-  generate();
-  let t=getTile(nx,ny);
-
-  if(t && !tiles[t].solid){
-   playerX=nx;
-   playerY=ny;
-
-   if(tiles[t].wild && Math.random()<0.4){
-    startBattle();
-   }
-  }
-
-  if(e.key==="t") state="team";
- }
-
- else if(state==="battle"){
-  if(e.key==="1") playerAttack(0);
-  if(e.key==="2") playerAttack(1);
-  if(e.key==="c") capture();
- }
-
- else if(state==="team"){
-  if(e.key==="1") player.active=0;
-  if(e.key==="2" && player.team[1]) player.active=1;
-  if(e.key==="3" && player.team[2]) player.active=2;
-  if(e.key==="Escape") state="explore";
- }
-
+joy.addEventListener("touchstart",()=>joyActive=true);
+joy.addEventListener("touchend",()=>{
+ joyActive=false;
+ stick.style.left="35px";
+ stick.style.top="35px";
 });
 
-// ================= DRAW =================
-function drawExplore(){
- generate();
-
- for(let y=-view;y<=view;y++){
-  for(let x=-view;x<=view;x++){
-   let t=getTile(playerX+x,playerY+y);
-   ctx.fillStyle=tiles[t].color;
-   ctx.fillRect(
-    (x+view)*tileSize,
-    (y+view)*tileSize,
-    tileSize,tileSize
-   );
-  }
+joy.addEventListener("touchmove",e=>{
+ if(!joyActive || state!=="explore") return;
+ let rect=joy.getBoundingClientRect();
+ let x=e.touches[0].clientX-rect.left-60;
+ let y=e.touches[0].clientY-rect.top-60;
+ let dist=Math.sqrt(x*x+y*y);
+ if(dist>40){
+  x*=40/dist;
+  y*=40/dist;
  }
+ stick.style.left=35+x+"px";
+ stick.style.top=35+y+"px";
 
- ctx.fillStyle="red";
- ctx.fillRect(view*tileSize+8,view*tileSize+8,16,16);
+ if(Math.abs(x)>20) playerX+=x>0?1:-1;
+ if(Math.abs(y)>20) playerY+=y>0?1:-1;
+
+ generate();
+ if(Math.random()<0.05) startBattle();
+});
+
+// ================= UI =================
+const attack1=document.getElementById("attack1");
+const attack2=document.getElementById("attack2");
+const captureBtn=document.getElementById("captureBtn");
+const menuBtn=document.getElementById("menuBtn");
+
+attack1.onclick=()=>playerAttack(0);
+attack2.onclick=()=>playerAttack(1);
+captureBtn.onclick=capture;
+menuBtn.onclick=()=>{
+ state=state==="team"?"explore":"team";
+ updateUI();
+};
+
+function updateUI(){
+ const battleUI=state==="battle";
+ attack1.classList.toggle("hidden",!battleUI);
+ attack2.classList.toggle("hidden",!battleUI);
+ captureBtn.classList.toggle("hidden",!battleUI);
 }
 
-function drawBattle(){
- ctx.fillStyle="#000";
- ctx.fillRect(0,0,320,288);
-
- let active=player.team[player.active];
-
- ctx.fillStyle="#fff";
- ctx.fillText("Enemy "+enemy.type+" Lv"+enemy.level,20,20);
- ctx.fillText("HP "+enemy.hp+"/"+enemy.maxHp,20,40);
-
- ctx.fillText("Active "+active.name,20,100);
- ctx.fillText("HP "+active.hp+"/"+active.maxHp,20,120);
-
- ctx.fillText("1:"+active.moves[0].name+" PP:"+active.moves[0].pp,20,160);
- ctx.fillText("2:"+active.moves[1].name+" PP:"+active.moves[1].pp,20,180);
- ctx.fillText("C:Capture",20,200);
-
- ctx.fillText(msg,20,230);
-}
-
-function drawTeam(){
- ctx.fillStyle="#111";
- ctx.fillRect(0,0,320,288);
-
- ctx.fillStyle="#fff";
- ctx.fillText("TEAM",20,20);
-
- player.team.forEach((m,i)=>{
-  ctx.fillText(
-   (i+1)+": "+m.name+" HP:"+m.hp+"/"+m.maxHp,
-   20,60+i*20
-  );
- });
-
- ctx.fillText("ESC to exit",20,200);
-}
-
-function loop(){
+// ================= DRAW =================
+function draw(){
  ctx.clearRect(0,0,320,288);
 
- if(state==="explore") drawExplore();
- if(state==="battle") drawBattle();
- if(state==="team") drawTeam();
+ if(state==="explore"){
+  generate();
+  for(let y=-view;y<=view;y++){
+   for(let x=-view;x<=view;x++){
+    let t=getTile(playerX+x,playerY+y);
+    ctx.fillStyle=tiles[t].color;
+    ctx.fillRect((x+view)*32,(y+view)*32,32,32);
+   }
+  }
+  ctx.fillStyle="red";
+  ctx.fillRect(view*32+8,view*32+8,16,16);
+ }
 
- requestAnimationFrame(loop);
+ if(state==="battle"){
+  ctx.fillStyle="#000";
+  ctx.fillRect(0,0,320,288);
+  ctx.fillStyle="#fff";
+  ctx.fillText("Enemy "+enemy.type,20,20);
+  ctx.fillText("HP "+enemy.hp+"/"+enemy.maxHp,20,40);
+  let active=player.team[player.active];
+  ctx.fillText("You "+active.name,20,100);
+  ctx.fillText("HP "+active.hp+"/"+active.maxHp,20,120);
+  ctx.fillText(msg,20,200);
+ }
+
+ requestAnimationFrame(draw);
 }
 
+updateUI();
 generate();
-loop();
+draw();
 </script>
 </body>
 </html>
